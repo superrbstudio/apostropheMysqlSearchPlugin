@@ -56,10 +56,19 @@ class aMysqlSearch extends aSearchService
     }
     $relationTableName = $info['item_table'] . '_to_a_search_document';
     $relatedId = $info['item_table'] . '_id';
-    $relation = $this->sql->queryOne("select * from $relationTableName WHERE $relatedId = :item_id", $info);
+    $q = "select * from $relationTableName atsd INNER JOIN a_search_document asd ON asd.id = atsd.a_search_document_id WHERE atsd.$relatedId = :item_id ";
+    if (isset($info['culture']))
+    {
+      $q .= 'AND asd.culture = :culture ';
+    }
+    $relation = $this->sql->queryOne($q, $info);
     if (!$relation)
     {
       $this->sql->query("INSERT INTO $relationTableName ($relatedId, a_search_document_id) VALUES (:item_id, :a_search_document_id)", array('item_id' => $info['item_id'], 'a_search_document_id' => $document_id));
+    }
+    else
+    {
+      $this->sql->update($relationTableName, $relation['id'], array('a_search_document_id' => $document_id));
     }
     if (isset($options['info']))
     {
@@ -154,6 +163,12 @@ class aMysqlSearch extends aSearchService
     $q->innerJoin('asd.Usages asu');
     // Unicode: letters and spaces only
     $words = $this->split($search);
+    if (!count($words))
+    {
+      // Don't crash attempting to andWhereIn with an empty list
+      $q->andWhere('0 <> 0');
+      return $q;
+    }
     $q->innerJoin('asu.Word asw');
     $q->addGroupBy('asd.id');
     $q->addSelect('sum(asu.weight) as a_search_score, asd.info as a_search_info');
@@ -185,12 +200,12 @@ class aMysqlSearch extends aSearchService
       // It's more than just mb_strtolower
       throw new sfException('You must have full unicode support in PHP to use this plugin.');
     }
-    $words = mb_strtolower(preg_replace('/[^\p{L}\p{Z}]+/u', ' ', $text));
-    $words = preg_split('/\p{Z}+/', $words);
+    $words = mb_strtolower(preg_replace('/[^\p{L}\p{Z}]+/u', ' ', $text), 'UTF8');
+    $words = preg_split('/\p{Z}+/u', $words);
     $goodWords = array();
     foreach ($words as $word)
     {
-      if (!preg_match('/^\p{L}+$/', $word))
+      if (!preg_match('/^\p{L}+$/u', $word))
       {
         continue;
       }
