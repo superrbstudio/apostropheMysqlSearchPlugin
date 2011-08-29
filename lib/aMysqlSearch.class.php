@@ -144,7 +144,11 @@ class aMysqlSearch extends aSearchService
     {
       $this->deleteUsages($document_id);
     }
-    $this->sql->query('DELETE FROM a_search_document WHERE id IN :document_ids', array('document_ids' => $document_ids));
+    // Careful, WHERE IN bombs on empty lists. Thanks to Paulo Ribeiro
+    if (count($document_ids))
+    {
+      $this->sql->query('DELETE FROM a_search_document WHERE id IN :document_ids', array('document_ids' => $document_ids));
+    }
   }
 
   /**
