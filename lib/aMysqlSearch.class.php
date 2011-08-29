@@ -307,6 +307,7 @@ class aMysqlSearch extends aSearchService
   {
     // Drop any words that no longer have a reference. It's OK if you never do this, but
     // your search index will be smaller and faster if you do it occasionally (nightly is nice)
+    $this->initSql();
     $this->sql->query('DELETE asw FROM a_search_word AS asw LEFT JOIN a_search_usage asu ON asu.word_id = asw.id WHERE asu.id IS NULL');
   }
 }
