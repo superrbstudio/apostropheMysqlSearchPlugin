@@ -165,20 +165,61 @@ class aMysqlSearch extends aSearchService
     // Uses refclass to get to the search document
     $q->innerJoin($alias . '.aSearchDocuments asd');
     $q->innerJoin('asd.Usages asu');
-    // Unicode: letters and spaces only
-    $words = $this->split($search);
-    if (!count($words))
+    // Unicode: letters and spaces only, plus wildcard *
+    $words = $this->split($search, true);
+    
+    $wildcards = array();
+    $nwords = array();
+    foreach ($words as $word)
     {
-      // Don't crash attempting to andWhereIn with an empty list
-      $q->andWhere('0 <> 0');
-      return $q;
+      if (preg_match('/^(.*?)\*(.*)$/', $word, $matches))
+      {
+        // Turn it into a LIKE pattern
+        $wildcards[] = $matches[1] . '%' . $matches[2];
+      }
+      else
+      {
+        $nwords[] = $word;
+      }
     }
+    $words = $nwords;
     $q->innerJoin('asu.Word asw');
     $q->addGroupBy('asd.id');
     $q->addSelect('sum(asu.weight) as a_search_score, asd.info as a_search_info');
-    // We'd put this in the innerJoin call but Doctrine doesn't support automatic
-    // parenthesization of lists anywhere but addWhere, it seems
-    $q->addWhere('asw.text IN ?', array($words));
+    // Build an OR of the wildcard LIKE clauses and an IN clause for the straightforward matches
+    $clause = '';
+    $args = array();
+    if (count($wildcards))
+    {
+      foreach ($wildcards as $wildcard)
+      {
+        if (strlen($clause))
+        {
+          $clause .= 'OR ';
+        }
+        $clause .= 'asw.text LIKE ? ';
+        $args[] = $wildcard;
+      }
+    }
+    // Don't crash on an empty IN clause
+    if (count($words))
+    {
+      if (strlen($clause))
+      {
+        $clause .= 'OR ';
+      }
+      // We'd put this in the innerJoin call but Doctrine doesn't support automatic
+      // parenthesization of lists anywhere but addWhere, it seems
+      $clause .= 'asw.text IN ?';
+      $args[] = $words;
+    }
+    if (!strlen($clause))
+    {
+      // Searches for nothing should not return everything
+      $q->andWhere('0 <> 0');
+      return $q;
+    }
+    $q->andWhere($clause, $args);
     if (isset($options['culture']))
     {
       $q->addWhere('asd.culture = ?', $options['culture']);
@@ -196,20 +237,31 @@ class aMysqlSearch extends aSearchService
    * 2. Convert to lowercase (again, respecting Unicode).
    *
    * 3. Split into words on whitespace boundaries (according to Unicode). 
+   *
+   * If wildcard is true allow *
    */
-  public function split($text)
+  public function split($text, $wildcard = false)
   {
     if (!function_exists('mb_strtolower'))
     {
       // It's more than just mb_strtolower
       throw new sfException('You must have full unicode support in PHP to use this plugin.');
     }
-    $words = mb_strtolower(preg_replace('/[^\p{L}\p{Z}]+/u', ' ', $text), 'UTF8');
+    $wildcardRegex = '';
+    if ($wildcard)
+    {
+      $wildcardRegex = '\*';
+    }
+    $words = mb_strtolower(preg_replace('/[^\p{L}' . $wildcardRegex . '\p{Z}]+/u', ' ', $text), 'UTF8');
     $words = preg_split('/\p{Z}+/u', $words);
     $goodWords = array();
     foreach ($words as $word)
     {
-      if (!preg_match('/^\p{L}+$/u', $word))
+      if ($wildcard)
+      {
+        $wildcardRegex = '\*?';
+      }
+      if (!preg_match('/^\p{L}+' . $wildcardRegex . '$/u', $word))
       {
         continue;
       }
