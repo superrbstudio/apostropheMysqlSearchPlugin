@@ -79,7 +79,7 @@ class aMysqlSearch extends aSearchService
       $this->sql->query('UPDATE a_search_document asd SET asd.info = NULL WHERE asd.id = :document_id', array('id' => $document_id));
     }
     $this->deleteUsages($document_id);
-    if (!is_array($options['texts']))
+    if ((!isset($options['texts'])) || (!is_array($options['texts'])))
     {
       $options['texts'] = array(array('weight' => 1.0, 'text' => $options['text']));
     }
