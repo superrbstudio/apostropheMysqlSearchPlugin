@@ -31,8 +31,6 @@ class apostropheMysqlSearchPluginConfiguration extends sfPluginConfiguration
       $sql = new aMysql();
     }
     
-    echo("Migrating apostropheMysqlSearchPlugin...\n");
-
     if (!$sql->tableExists('a_search_document'))
     {
       $sql->sql(array(
