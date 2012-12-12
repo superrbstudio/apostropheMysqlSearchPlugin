@@ -124,7 +124,8 @@ class aMysqlSearch extends aSearchService
         {
           $word_id = $wordInfo['id'];
         }
-        $this->sql->insert('a_search_usage', array('word_id' => $word_id, 'document_id' => $document_id, 'weight' => $weight));
+        // Use insertOrUpdate to survive rare race conditions
+        $this->sql->insertOrUpdate('a_search_usage', array('word_id' => $word_id, 'document_id' => $document_id, 'weight' => $weight));
       }
     }
   }
