@@ -186,7 +186,7 @@ class aMysqlSearch extends aSearchService
     $words = $nwords;
     $q->innerJoin('asu.Word asw');
     $q->addGroupBy('asd.id');
-    $q->addSelect('sum(asu.weight) as a_search_score, asd.info as a_search_info');
+    $q->addSelect('sum(asu.weight) + (((datediff(NOW(), asd.published_at) < 31) as integer) * 100) as a_search_score, asd.info as a_search_info');
     // Build an OR of the wildcard LIKE clauses and an IN clause for the straightforward matches
     $clause = '';
     $args = array();
@@ -253,7 +253,12 @@ class aMysqlSearch extends aSearchService
     {
       $wildcardRegex = '\*';
     }
-    $words = mb_strtolower(preg_replace('/[^\p{L}' . $wildcardRegex . '\p{Z}]+/u', ' ', $text), 'UTF8');
+    // Always letters, sometimes numbers
+    $extraClasses = '';
+    if (sfConfig::get('app_a_mysql_search_numbers')) {
+      $extraClasses .= '\p{N}';
+    }
+    $words = mb_strtolower(preg_replace('/[^\p{L}' . $extraClasses . $wildcardRegex . '\p{Z}]+/u', ' ', $text), 'UTF8');
     $words = preg_split('/\p{Z}+/u', $words);
     $goodWords = array();
     foreach ($words as $word)
@@ -262,7 +267,7 @@ class aMysqlSearch extends aSearchService
       {
         $wildcardRegex = '\*?';
       }
-      if (!preg_match('/^\p{L}+' . $wildcardRegex . '$/u', $word))
+      if (!preg_match('/^[\p{L}' . $extraClasses . ']+$/u', $word))
       {
         continue;
       }
