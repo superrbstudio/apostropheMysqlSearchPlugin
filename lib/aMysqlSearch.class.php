@@ -35,7 +35,11 @@ class aMysqlSearch extends aSearchService
       $this->sql = new aMysql();
     }
   }
-  
+
+  // Constantly checking the ids of words in the database hurts performance, cache that at least
+  // for this request/invocation
+  protected $wordCache = array();
+
   /**
    * update(array('item' => $item, 'text' => 'this is my text', 'info' => array(some-serializable-stuff), 'culture' => 'en')) 
    *
@@ -46,29 +50,14 @@ class aMysqlSearch extends aSearchService
   public function update($options)
   {
     $this->initSql();
-    
     $info = $this->getDocumentInfo($options);
     $document_id = $this->getDocumentId($info);
+    $new = false;
     if (!$document_id)
     {
       $this->sql->query('INSERT INTO a_search_document (culture) VALUES (:culture)', $info);
       $document_id = $this->sql->lastInsertId();
-    }
-    $relationTableName = $info['item_table'] . '_to_a_search_document';
-    $relatedId = $info['item_table'] . '_id';
-    $q = "select * from $relationTableName atsd INNER JOIN a_search_document asd ON asd.id = atsd.a_search_document_id WHERE atsd.$relatedId = :item_id ";
-    if (isset($info['culture']))
-    {
-      $q .= 'AND asd.culture = :culture ';
-    }
-    $relation = $this->sql->queryOne($q, $info);
-    if (!$relation)
-    {
-      $this->sql->query("INSERT INTO $relationTableName ($relatedId, a_search_document_id) VALUES (:item_id, :a_search_document_id)", array('item_id' => $info['item_id'], 'a_search_document_id' => $document_id));
-    }
-    else
-    {
-      $this->sql->update($relationTableName, $relation['id'], array('a_search_document_id' => $document_id));
+      $new = true;
     }
     if (isset($options['info']))
     {
@@ -83,13 +72,13 @@ class aMysqlSearch extends aSearchService
     {
       $options['texts'] = array(array('weight' => 1.0, 'text' => $options['text']));
     }
+    $wordWeights = array();
     foreach ($options['texts'] as $textInfo)
     {
       $weight = $textInfo['weight'];
       $text = $textInfo['text'];
       $words = $this->split($text);
-      $wordWeights = array();
-      // Index each word just once per text but increase the weight for subsequent usages.
+      // Index each word just once per document but increase the weight for subsequent usages.
       // If we reversed the order here and multiplied by something a little less than one
       // at each pass we could weight early mentions more heavily
       foreach ($words as $word)
@@ -103,8 +92,10 @@ class aMysqlSearch extends aSearchService
           $wordWeights[$word] += $weight;
         }
       }
-      foreach ($wordWeights as $word => $weight)
-      {
+    }
+    foreach ($wordWeights as $word => $weight)
+    {
+      if (!isset($this->wordCache[$word])) {
         $wordInfo = $this->sql->queryOne('SELECT * FROM a_search_word asw WHERE text = :text', array('text' => $word));
         if (!$wordInfo)
         {
@@ -124,9 +115,56 @@ class aMysqlSearch extends aSearchService
         {
           $word_id = $wordInfo['id'];
         }
-        // Use insertOrUpdate to survive rare race conditions
-        $this->sql->insertOrUpdate('a_search_usage', array('word_id' => $word_id, 'document_id' => $document_id, 'weight' => $weight));
+        $this->wordCache[$word] = $word_id;
       }
+    }
+    if (count($wordWeights))
+    {
+      if ($new)
+      {
+        // For the sake of speed, hand-tuned SQL for a bulk insert operation
+        $pdo = $this->sql->getConn();
+        $sql = 'INSERT INTO a_search_usage (word_id, document_id, weight) VALUES ';
+        $first = true;
+        foreach ($wordWeights as $word => $weight)
+        {
+          if (!$first)
+          {
+            $sql .= ',';
+          }
+          $first = false;
+          $sql .= '(' . $this->wordCache[$word] . ',' . $document_id . ',' . $weight . ')';
+        }
+        // error_log($sql);
+        $pdo->exec($sql);
+      }
+      else
+      {
+        foreach ($wordWeights as $word => $weight)
+        {
+          $this->sql->insertOrUpdate('a_search_usage', array('word_id' => $this->wordCache[$word], 'document_id' => $document_id, 'weight' => $weight));
+        }
+      }
+    }
+
+    // Relate the search document to a Doctrine object via an intermediate table. Do this
+    // last so that if this document is new, nobody else can find it until we're done. This
+    // prevents race conditions and allows us to avoid insertOrUpdate
+    $relationTableName = $info['item_table'] . '_to_a_search_document';
+    $relatedId = $info['item_table'] . '_id';
+    $q = "select * from $relationTableName atsd INNER JOIN a_search_document asd ON asd.id = atsd.a_search_document_id WHERE atsd.$relatedId = :item_id ";
+    if (isset($info['culture']))
+    {
+      $q .= 'AND asd.culture = :culture ';
+    }
+    $relation = $this->sql->queryOne($q, $info);
+    if (!$relation)
+    {
+      $this->sql->query("INSERT INTO $relationTableName ($relatedId, a_search_document_id) VALUES (:item_id, :a_search_document_id)", array('item_id' => $info['item_id'], 'a_search_document_id' => $document_id));
+    }
+    else
+    {
+      $this->sql->update($relationTableName, $relation['id'], array('a_search_document_id' => $document_id));
     }
   }
 
@@ -284,13 +322,16 @@ class aMysqlSearch extends aSearchService
     $relatedId = $itemTable . '_id';
 
     // Clean up the usages and the documents in one fell swoop
-    $q = "DELETE asu,asd FROM a_search_usage AS asu INNER JOIN a_search_document AS asd ON asu.document_id = asd.id INNER JOIN $relationTableName AS refclass ON refclass.a_search_document_id = asd.id ";
-    
+    $cultureClause = '';
     if (isset($info['culture']))
     {
-      $q .= 'AND asd.culture = :culture ';
+      $cultureClause = ' AND asd.culture = :culture ';
     }
-    
+    // Should be faster than the old query; our goal here is to clean up the documents and
+    // usages without hitting mysql's 20sec limit on locks. We let ON DELETE CASCADE mop up
+    // the a_search_usage rows
+    $q = "DELETE asd FROM a_search_document AS asd WHERE asd.id IN (SELECT a_search_document_id FROM $relationTableName) $cultureClause";
+    error_log($q);
     $this->sql->query($q);
   }
   
