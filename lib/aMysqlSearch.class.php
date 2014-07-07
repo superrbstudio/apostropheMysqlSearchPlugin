@@ -16,7 +16,7 @@ class aMysqlSearch extends aSearchService
   // can have unrelated WHERE clauses and joins. Which means that you
   // don't have to search two different databases and then get stuck
   // with giant IN queries and awful performance. You're welcome.
-  
+
   protected $sql;
 
   public function __construct()
@@ -41,12 +41,12 @@ class aMysqlSearch extends aSearchService
   protected $wordCache = array();
 
   /**
-   * update(array('item' => $item, 'text' => 'this is my text', 'info' => array(some-serializable-stuff), 'culture' => 'en')) 
+   * update(array('item' => $item, 'text' => 'this is my text', 'info' => array(some-serializable-stuff), 'culture' => 'en'))
    *
    * You may pass item_id and item_model options instead of item if you don't have a hydrated object. item_model must
    * be the class name, not the table name
    */
-  
+
   public function update($options)
   {
     $this->initSql();
@@ -206,7 +206,7 @@ class aMysqlSearch extends aSearchService
     $q->innerJoin('asd.Usages asu');
     // Unicode: letters and spaces only, plus wildcard *
     $words = $this->split($search, true);
-    
+
     $wildcards = array();
     $nwords = array();
     foreach ($words as $word)
@@ -267,15 +267,15 @@ class aMysqlSearch extends aSearchService
     $q->addOrderBy('a_search_score desc');
     return $q;
   }
-  
+
   /**
    * 1. Replace everything that isn't considered a letter or whitespace by
    * Unicode with a space. (Otherwise, we get zillions of compound words made when
    * things like hyphens were removed, instead of hits for the individual words.)
-   * 
+   *
    * 2. Convert to lowercase (again, respecting Unicode).
    *
-   * 3. Split into words on whitespace boundaries (according to Unicode). 
+   * 3. Split into words on whitespace boundaries (according to Unicode).
    *
    * If wildcard is true allow *
    */
@@ -313,7 +313,7 @@ class aMysqlSearch extends aSearchService
     }
     return $goodWords;
   }
-  
+
   public function deleteAll($options)
   {
     $this->initSql();
@@ -334,10 +334,10 @@ class aMysqlSearch extends aSearchService
     error_log($q);
     $this->sql->query($q);
   }
-  
+
   /**
    * Returns the document id matching the specified item_id, item_model and optionally culture.
-   * If you do not specify a culture you will get a predictable result only if the 
+   * If you do not specify a culture you will get a predictable result only if the
    * document was stored without a culture
    */
   protected function getDocumentId($info)
@@ -376,7 +376,7 @@ class aMysqlSearch extends aSearchService
     }
     return $q;
   }
-  
+
   protected function getDocumentInfo($options)
   {
     if (isset($options['item_id']))
@@ -405,7 +405,7 @@ class aMysqlSearch extends aSearchService
     $this->initSql();
     $this->sql->query('DELETE FROM a_search_usage WHERE document_id = :document_id', array('document_id' => $document_id));
   }
-  
+
   public function optimize()
   {
     // Drop any words that no longer have a reference. It's OK if you never do this, but
